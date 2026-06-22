@@ -27,6 +27,7 @@ public class CarCoinGame : MonoBehaviour
     readonly List<Coin> coins = new List<Coin>();
     int total, collected;
     bool won;
+    Material goldMat;                 // shared gold material (coins + collect sparks)
     public static int triggerHits;   // debug: how many times any coin trigger fired
 
     // control state
@@ -52,6 +53,7 @@ public class CarCoinGame : MonoBehaviour
         foreach (var c in FindObjectsByType<Camera>(FindObjectsSortMode.None)) Destroy(c.gameObject);
         foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None)) Destroy(l.gameObject);
 
+        goldMat = Mat(new Color(1f, 0.82f, 0.12f), 0.4f, 0.55f);
         BuildEnvironment();
         BuildCamera();
         BuildCar();
@@ -209,7 +211,7 @@ public class CarCoinGame : MonoBehaviour
         g.transform.position = pos;
         g.transform.rotation = Quaternion.Euler(90f, 0, 0);   // stand the disc upright
         g.transform.localScale = new Vector3(1.1f, 0.09f, 1.1f);
-        g.GetComponent<Renderer>().sharedMaterial = Mat(new Color(1f, 0.82f, 0.12f), 0.35f, 0.45f);
+        g.GetComponent<Renderer>().sharedMaterial = goldMat;
         var sc = g.AddComponent<SphereCollider>();
         sc.isTrigger = true;
         sc.radius = 3.5f; // generous pickup
@@ -279,7 +281,9 @@ public class CarCoinGame : MonoBehaviour
         c.taken = true;
         coins.Remove(c);
         collected++;
-        Juice.Score(c.transform.position);
+        Juice.Score();                 // pickup sound
+        Juice.Shake(0.12f);            // tiny pop
+        Burst(c.transform.position);   // gold particle burst
         Destroy(c.gameObject);
         Refresh();
         if (collected >= total && !won)
@@ -288,6 +292,22 @@ public class CarCoinGame : MonoBehaviour
             banner.text = "ALL COINS!\nYOU WIN";
             banner.gameObject.SetActive(true);
             Juice.Score(); Juice.Shake(0.4f);
+        }
+    }
+
+    // gold particle burst on pickup (CreatePrimitive cubes — renders reliably in WebGL)
+    void Burst(Vector3 pos)
+    {
+        for (int i = 0; i < 16; i++)
+        {
+            var p = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(p.GetComponent<Collider>());
+            p.transform.position = pos + Vector3.up * 0.3f;
+            p.transform.localScale = Vector3.one * Random.Range(0.16f, 0.34f);
+            p.transform.rotation = Random.rotation;
+            p.GetComponent<Renderer>().sharedMaterial = goldMat;
+            Vector3 dir = (Random.onUnitSphere + Vector3.up * 1.6f).normalized;
+            p.AddComponent<Spark>().Init(dir * Random.Range(4.5f, 9f));
         }
     }
 
@@ -401,5 +421,23 @@ public class Coin : MonoBehaviour
         CarCoinGame.triggerHits++;
         if (taken || game == null) return;
         if (other.GetComponentInParent<Rigidbody>() != null) game.Collect(this);
+    }
+}
+
+// A gold shard flung out when a coin is collected: arcs under gravity, spins, shrinks, fades out.
+public class Spark : MonoBehaviour
+{
+    Vector3 vel, spin;
+    float age, life = 0.6f;
+    public void Init(Vector3 v) { vel = v; spin = Random.insideUnitSphere * 720f; }
+    void Update()
+    {
+        float dt = Time.deltaTime;
+        age += dt;
+        vel += Vector3.down * 16f * dt;                 // gravity
+        transform.position += vel * dt;
+        transform.Rotate(spin * dt, Space.World);
+        transform.localScale *= Mathf.Max(0f, 1f - dt * 1.6f);
+        if (age >= life) Destroy(gameObject);
     }
 }
