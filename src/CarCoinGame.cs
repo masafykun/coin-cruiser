@@ -27,6 +27,9 @@ public class CarCoinGame : MonoBehaviour
     readonly List<Coin> coins = new List<Coin>();
     int total, collected;
     bool won;
+    int stage = 1;
+    float winTimer;
+    readonly List<GameObject> stageObjects = new List<GameObject>(); // obstacles+coins of current stage
     Material goldMat;                 // shared gold material (coins + collect sparks)
     public static int triggerHits;   // debug: how many times any coin trigger fired
 
@@ -57,9 +60,8 @@ public class CarCoinGame : MonoBehaviour
         BuildEnvironment();
         BuildCamera();
         BuildCar();
-        BuildCoins();
         BuildHud();
-        Refresh();
+        BuildStage();          // obstacles + coins for stage 1
     }
 
     // ---------- materials / primitives ----------
@@ -115,24 +117,6 @@ public class CarCoinGame : MonoBehaviour
         Box(new Vector3(0, 2f, -41.5f), new Vector3(84, 4, 1), wc);
         Box(new Vector3(41.5f, 2f, 0), new Vector3(1, 4, 84), wc);
         Box(new Vector3(-41.5f, 2f, 0), new Vector3(1, 4, 84), wc);
-
-        // raised platform + ramp (the 3D part: drive up and grab coins on top)
-        Box(new Vector3(24, 1.5f, 24), new Vector3(18, 3, 18), new Color(0.46f, 0.42f, 0.52f));
-        var ramp = Box(new Vector3(8.5f, 1.0f, 24), new Vector3(13, 0.6f, 9), new Color(0.62f, 0.58f, 0.5f));
-        ramp.transform.rotation = Quaternion.Euler(0, 0, 13.5f); // slope up toward +X
-
-        // obstacle blocks of different heights to weave through
-        Color oc = new Color(0.78f, 0.38f, 0.32f);
-        Vector3[] obs = {
-            new Vector3(-16, 1.5f, 6), new Vector3(-9, 1f, -13), new Vector3(-22, 2f, -8),
-            new Vector3(6, 2.5f, -20), new Vector3(16, 1.5f, -10), new Vector3(-4, 1f, 16)
-        };
-        float[] oh = { 3f, 2f, 4f, 5f, 3f, 2f };
-        for (int i = 0; i < obs.Length; i++)
-        {
-            var p = obs[i]; p.y = oh[i] * 0.5f;
-            Box(p, new Vector3(3, oh[i], 3), oc);
-        }
     }
 
     // ---------- camera ----------
@@ -219,25 +203,52 @@ public class CarCoinGame : MonoBehaviour
         coin.game = this;
         coin.baseY = pos.y;
         coins.Add(coin);
+        stageObjects.Add(g);
     }
 
-    void BuildCoins()
+    // Build the current stage: fresh random obstacles + coins (counts grow each stage).
+    void BuildStage()
     {
-        // ground ring
-        for (int i = 0; i < 10; i++)
+        foreach (var o in stageObjects) if (o != null) Destroy(o);
+        stageObjects.Clear();
+        coins.Clear();
+
+        int nObs = Mathf.Min(3 + stage, 9);
+        Color oc = new Color(0.78f, 0.38f, 0.32f);
+        for (int i = 0; i < nObs; i++)
         {
-            float a = i * 36f * Mathf.Deg2Rad;
-            AddCoin(new Vector3(Mathf.Cos(a) * 15f, 1.3f, Mathf.Sin(a) * 15f - 3f));
+            Vector2 p = RandPos(10f, 31f);
+            float hgt = Random.Range(2f, 4.5f);
+            stageObjects.Add(Box(new Vector3(p.x, hgt * 0.5f, p.y), new Vector3(3f, hgt, 3f), oc));
         }
-        // a couple mid-field
-        AddCoin(new Vector3(-12, 1.3f, -2));
-        AddCoin(new Vector3(2, 1.3f, 8));
-        // more coins spread across the field
-        AddCoin(new Vector3(-18, 1.3f, 14));
-        AddCoin(new Vector3(14, 1.3f, 16));
-        AddCoin(new Vector3(-14, 1.3f, -18));
-        AddCoin(new Vector3(18, 1.3f, -16));
+
+        int nCoins = Mathf.Min(12 + stage * 2, 26);
+        for (int i = 0; i < nCoins; i++)
+        {
+            Vector2 p = RandPos(5f, 33f);
+            AddCoin(new Vector3(p.x, 1.3f, p.y));
+        }
+
         total = coins.Count;
+        collected = 0;
+        won = false;
+        if (banner != null) banner.gameObject.SetActive(false);
+        if (car != null)
+        {
+            car.position = new Vector3(0, 1.3f, -3);
+            carRb.MoveRotation(Quaternion.identity);
+            carRb.linearVelocity = Vector3.zero;
+            curSpeed = 0f;
+        }
+        Refresh();
+    }
+
+    // random (x,z) on the field, in an annulus around the car's spawn so nothing spawns on the car
+    Vector2 RandPos(float minR, float maxR)
+    {
+        float a = Random.value * Mathf.PI * 2f;
+        float r = Random.Range(minR, maxR);
+        return new Vector2(Mathf.Cos(a) * r, Mathf.Sin(a) * r - 3f);
     }
 
     // ---------- hud ----------
@@ -272,7 +283,7 @@ public class CarCoinGame : MonoBehaviour
 
     void Refresh()
     {
-        if (hud != null) hud.text = "COINS  " + collected + " / " + total;
+        if (hud != null) hud.text = "STAGE " + stage + "     COINS  " + collected + " / " + total;
     }
 
     public void Collect(Coin c)
@@ -289,9 +300,10 @@ public class CarCoinGame : MonoBehaviour
         if (collected >= total && !won)
         {
             won = true;
-            banner.text = "ALL COINS!\nYOU WIN";
+            winTimer = 2.2f;
+            banner.text = "STAGE " + stage + " CLEAR!\nNEXT: STAGE " + (stage + 1);
             banner.gameObject.SetActive(true);
-            Juice.Score(); Juice.Shake(0.4f);
+            Juice.Score(); Juice.Shake(0.45f);
         }
     }
 
@@ -314,6 +326,14 @@ public class CarCoinGame : MonoBehaviour
     // ---------- loop ----------
     void Update()
     {
+        if (won)
+        {
+            steer = 0f; throttle = 0f;
+            winTimer -= Time.deltaTime;
+            if (winTimer <= 0f) { stage++; BuildStage(); }
+            return;
+        }
+
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
         if (Mathf.Abs(h) > 0.05f || Mathf.Abs(v) > 0.05f) attract = false;
@@ -328,13 +348,13 @@ public class CarCoinGame : MonoBehaviour
                 steer = Mathf.Clamp(ang / 35f, -1f, 1f);
                 throttle = 1f;
 
-                // steer around solid stuff in front (ignore coin triggers)
-                if (Physics.Raycast(car.position + car.forward * 2.5f + Vector3.up * 0.3f, car.forward, 3.5f, ~0, QueryTriggerInteraction.Ignore))
-                    steer = (ang >= 0f) ? -1f : 1f;
+                // veer a consistent way around solid stuff ahead (avoids oscillating in place)
+                if (Physics.Raycast(car.position + car.forward * 2.5f + Vector3.up * 0.3f, car.forward, 4f, ~0, QueryTriggerInteraction.Ignore))
+                    steer = 1f;
 
-                // unstuck: only after being genuinely jammed for a while, reverse + turn briefly
+                // unstuck: jammed -> back up and swing the nose
                 if (carRb.linearVelocity.magnitude < 1.0f) stuckT += Time.deltaTime; else stuckT = 0f;
-                if (stuckT > 1.5f) { throttle = -1f; steer = 1f; if (stuckT > 2.4f) stuckT = 0f; }
+                if (stuckT > 0.7f) { throttle = -1f; steer = 1f; if (stuckT > 1.6f) stuckT = 0f; }
             }
             else { steer = 0; throttle = 0; }
         }
